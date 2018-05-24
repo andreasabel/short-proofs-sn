@@ -12,7 +12,7 @@ data Ty : Set where
   _⇒_ : (A B : Ty) → Ty
 
 infixr 6 _⇒_ _∷_ _++_
-infixl 4 _∙_ _◇_
+infixl 5 _∙_ _◇_
 
 data Cxt : Set where
   ε : Cxt
@@ -34,7 +34,7 @@ mutual
   --   _∙_ : ∀{A} (h : Head Γ A) (es : Elims Γ A C) → Tm Γ C
 
   record Tm (Γ : Cxt) (C : Ty) : Set where
-    inductive; constructor _∙_; field
+    no-eta-equality; inductive; constructor _∙_; field
       {A} : Ty
       h   : Head Γ A
       es  : Elims Γ A C
@@ -54,6 +54,21 @@ mutual
     _∷_ : ∀{B C} (e : Elim Γ A B) (es : Elims Γ B C) → Elims Γ A C
 
 pattern var! x = var x ∙ []
+pattern zero!  = zero  ∙ []
+pattern suc! t = suc t ∙ []
+pattern abs! t = abs t ∙ []
+
+-- Numerals
+
+num : ∀{Γ} (n : ℕ) → Tm Γ Nat
+num 0       = zero!
+num (suc n) = suc! (num n)
+
+data Num {Γ : Cxt} : Tm Γ Nat → Set where
+  zero : Num zero!
+  suc  : ∀{t} (n : Num t) → Num (suc! t)
+
+-- Elimination concatenation
 
 _++_ : ∀{Γ A B C} (es : Elims Γ A B) (es' : Elims Γ B C) → Elims Γ A C
 []       ++ es' = es'
@@ -73,7 +88,14 @@ _++_ : ∀{Γ A B C} (es : Elims Γ A B) (es' : Elims Γ B C) → Elims Γ A C
 _◇_ : ∀{Γ A C} (t : Tm Γ A) (es : Elims Γ A C) → Tm Γ C
 _◇_ (h ∙ es) es' = h ∙ es ++ es'
 
--- ∀ {Γ A B C D} (t : Tm Γ  ◇ es ◇ es' ≡ t ◇ (es ++ es')
+◇-[] : ∀{Γ A} (t : Tm Γ A) → t ◇ [] ≡ t
+◇-[] (h ∙ es) = refl
+
+◇-++ : ∀ {Γ A B C} (t : Tm Γ A) {es : Elims Γ A B} {es' : Elims Γ B C} → t ◇ es ◇ es' ≡ t ◇ (es ++ es')
+◇-++ (h ∙ es) = refl
+
+{-# REWRITE ◇-[] ◇-++ #-}
+
 
 -- Weakening
 
@@ -138,13 +160,19 @@ subVar (σ ∙ u) (vs x) = subVar σ x
 
 mutual
   subTm : ∀{Γ Δ C} (σ : Sub Γ Δ) (t : Tm Δ C) → Tm Γ C
-  subTm σ (h ∙ es) = subHead σ h (subElims σ es)
+  subTm σ (h ∙ es) = subHead σ h ◇ subElims σ es
 
-  subHead : ∀{Γ Δ A C} (σ : Sub Γ Δ) (h : Head Δ A) (es : Elims Γ A C) → Tm Γ C
-  subHead σ zero    es = zero ∙ es
-  subHead σ (suc t) es = suc (subTm σ t) ∙ es
-  subHead σ (abs t) es = abs (subTm (liftSub σ) t) ∙ es
-  subHead σ (var x) es = subVar σ x ◇ es
+  subHead : ∀{Γ Δ A} (σ : Sub Γ Δ) (h : Head Δ A) → Tm Γ A
+  subHead σ zero    = zero!
+  subHead σ (suc t) = suc! (subTm σ t)
+  subHead σ (abs t) = abs! (subTm (liftSub σ) t)
+  subHead σ (var x) = subVar σ x
+
+  -- subHead : ∀{Γ Δ A C} (σ : Sub Γ Δ) (h : Head Δ A) (es : Elims Γ A C) → Tm Γ C
+  -- subHead σ zero    es = zero ∙ es
+  -- subHead σ (suc t) es = suc (subTm σ t) ∙ es
+  -- subHead σ (abs t) es = abs (subTm (liftSub σ) t) ∙ es
+  -- subHead σ (var x) es = subVar σ x ◇ es
 
   subElim : ∀{Γ Δ A C} (σ : Sub Γ Δ) (e : Elim Δ A C) → Elim Γ A C
   subElim σ (app u)   = app (subTm σ u)
@@ -164,19 +192,21 @@ subElims-++ (e ∷ es) = cong (_ ∷_) (subElims-++ es)
 
 {-# REWRITE subElims-++ #-}
 
--- Numerals
+sub-◇ : ∀{Γ Δ} {σ : Sub Γ Δ} {A B} (t : Tm Δ A) {es : Elims Δ A B} →
+  subTm σ (t ◇ es) ≡ subTm σ t ◇ subElims σ es
+sub-◇ (h ∙ es) = refl
 
-pattern zero!  = zero  ∙ []
-pattern suc! t = suc t ∙ []
-pattern abs! t = abs t ∙ []
+{-# REWRITE sub-◇ #-}
 
-num : ∀{Γ} (n : ℕ) → Tm Γ Nat
-num 0       = zero!
-num (suc n) = suc! (num n)
+subNum : ∀ {Δ} {t : Tm Δ Nat} {Γ} (σ : Sub Γ Δ) (n : Num t) → Num (subTm σ t)
+subNum σ zero    = zero
+subNum σ (suc n) = suc (subNum σ n)
 
-data Num {Γ : Cxt} : Tm Γ Nat → Set where
-  zero : Num zero!
-  suc  : ∀{t} (n : Num t) → Num (suc! t)
+sub-num : ∀ {Γ Δ} {σ : Sub Γ Δ} (n : ℕ) → subTm σ (num n) ≡ num n
+sub-num zero = refl
+sub-num (suc n) = cong suc! (sub-num n)
+
+{-# REWRITE sub-num #-}
 
 -- The Ω set
 
@@ -251,15 +281,19 @@ mutual
   apply A (beta ot) ou = beta (apply A ot ou)
   apply A (omega ot f) ou = omega ot λ n → apply A (f n) ou
 
+  applys : ∀ {Γ A B} {t : Tm Γ A} (ot : Ok t) {es : Elims Γ A B} (os : Oks es) → Ok (t ◇ es)
+  applys ot []       = ot
+  applys ot (o ∷ os) = applys (apply _ ot o) os
+
   subs : ∀ A {Γ Δ} {σ : Sub Γ Δ} (oσ : OkSub A σ) {C} {t : Tm Δ C} (o : Ok t) → Ok (subTm σ t)
   subs A oσ zero = zero
   subs A oσ (suc o) = suc (subs A oσ o)
   subs A oσ (abs o) = abs (subs A (liftOk oσ) o)
-  subs A oσ (ne x os) = {!!}
-  subs A oσ (zerec o) = {!zerec (subs A oσ o)!}
-  subs A oσ (surec n o) = {!!}
-  subs A oσ (beta o) = {!beta (subs A oσ o)!}
-  subs A oσ (omega o f) = {!omega (subs A oσ o)!}
+  subs A oσ (ne x os) = {!applys ? !}
+  subs A oσ (zerec o) = zerec (subs A oσ o)
+  subs A oσ (surec n o) = surec (subNum _ n) (subs A oσ o)
+  subs A oσ (beta o) = beta {!(subs A oσ o)!}  -- need substitution composition
+  subs A oσ (omega o f) = omega (subs A oσ o) (λ n → {!subs A oσ (f n)!})
 
   sub : ∀ A {Γ B} {t : Tm (Γ ∙ A) B} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t [ u ])
   sub A ot ou = subs A (sgOk ou) ot
