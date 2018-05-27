@@ -254,11 +254,11 @@ mutual
     abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (o : Ok t) → Ok (abs! t)
     ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (os : Oks es) → Ok (var x ∙ es)
 
-    zerec  : ∀{A C} {u : Tm Γ A} {v} {es : Elims Γ A C} (o : Ok (u ◇ es)) → Ok (zero ∙ rec u v ∷ es)
+    zerec  : ∀{A C} {u : Tm Γ A} {v} (ov : Ok v) {es : Elims Γ A C} (o : Ok (u ◇ es)) → Ok (zero ∙ rec u v ∷ es)
     surec  : ∀{A C} {t : Tm Γ Nat} (n : Num t) {u : Tm Γ A} {v} {es : Elims Γ A C}
              (o : Ok (v ◇ app t ∷ app (t ◇ rec u v ∷ []) ∷ es)) → Ok (suc t ∙ rec u v ∷ es)
 
-    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} {es : Elims Γ B C}
+    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} (ou : Ok u) {es : Elims Γ B C}
              (o : Ok (t [ u ] ◇ es)) → Ok (abs t ∙ app u ∷ es)
 
     omega  : ∀{A C}{t : Tm Γ Nat} {u : Tm Γ A} {v} {es : Elims Γ A C}
@@ -290,9 +290,9 @@ mutual
   wkOk τ (suc o)     = suc (wkOk τ o)
   wkOk τ (abs o)     = abs (wkOk (lift τ) o)
   wkOk τ (ne x os)   = ne (wkVar τ x) (wkOks τ os)
-  wkOk τ (zerec o)   = zerec (wkOk τ o)
+  wkOk τ (zerec ov o)= zerec (wkOk τ ov) (wkOk τ o)
   wkOk τ (surec n o) = surec (wkNum τ n) (wkOk τ o)
-  wkOk τ (beta o)    = {!beta (wkOk τ o)!}  -- need weakening composition
+  wkOk τ (beta ou o) = beta (wkOk τ ou) {!(wkOk τ o)!}  -- need weakening composition
   wkOk τ (omega o f) = omega (wkOk τ o) (λ n → wkOk τ (f n))
 
   wkOks : ∀ {B Γ A} {es : Elims Γ A B} {Γ'} (τ : Γ' ≤ Γ) →
@@ -332,11 +332,11 @@ subOkVar A (oσ ∙ r) (vs x) = subOkVar A oσ x
 mutual
 
   appOk : ∀ A {Γ B} {t : Tm Γ (A ⇒ B)} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t ◇ app u ∷ [])
-  appOk A (abs ot) ou = beta (subOk1 A ot ou)
+  appOk A (abs ot) ou = beta ou (subOk1 A ot ou)
   appOk A (ne x os) ou = ne x (oks-snoc os ou)
-  appOk A (zerec ot) ou = zerec (appOk A ot ou)
+  appOk A (zerec ov ot) ou = zerec ov (appOk A ot ou)
   appOk A (surec n ot) ou = surec n (appOk A ot ou)
-  appOk A (beta ot) ou = beta (appOk A ot ou)
+  appOk A (beta o ot) ou = beta o (appOk A ot ou)
   appOk A (omega ot f) ou = omega ot λ n → appOk A (f n) ou
 
   appOks : ∀ A {Γ B} {t : Tm Γ A} (ot : Ok t) {es : Elims Γ A B} (os : Oks es) → Ok (t ◇ es)
@@ -356,9 +356,9 @@ mutual
   subOk A oσ (suc o) = suc (subOk A oσ o)
   subOk A oσ (abs o) = abs (subOk A (liftOk oσ) o)
   subOk A oσ (ne x os) = appRes A (subOkVar A oσ x) (subOks A oσ os)
-  subOk A oσ (zerec o) = zerec (subOk A oσ o)
+  subOk A oσ (zerec ou o) = zerec (subOk A oσ ou) (subOk A oσ o)
   subOk A oσ (surec n o) = surec (subNum _ n) (subOk A oσ o)
-  subOk A oσ (beta o) = beta {!(subOk A oσ o)!}  -- need substitution composition
+  subOk A oσ (beta ou o) = beta (subOk A oσ ou) {!(subOk A oσ o)!}  -- need substitution composition
   subOk A oσ (omega o f) = omega (subOk A oσ o) (λ n → subOk A oσ (f n))
 
   subOk1 : ∀ A {Γ B} {t : Tm (Γ ∙ A) B} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t [ u ])
@@ -371,7 +371,7 @@ numOk zero = zero
 numOk (suc n) = suc (numOk n)
 
 recOk : ∀ {B Γ} {u : Tm Γ B} {v : Tm Γ (Nat ⇒ B ⇒ B)} (ou : Ok u) (ov : Ok v) (n : ℕ) → Ok (num n ◇ rec u v ∷ [])
-recOk ou ov zero = zerec ou
+recOk ou ov zero = zerec ov ou
 recOk ou ov (suc n) = surec (numNum n) (appOk _ (appOk _ ov (numOk n)) (recOk ou ov n))
 
 elimOk : ∀{Γ A B} {t : Tm Γ A} (ot : Ok t) {e : Elim Γ A B} (oe : OkElim e) → Ok (t ◇ e ∷ [])
@@ -414,13 +414,12 @@ mutual
     abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (o : SN t) → SN (abs! t)
     ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (os : SNElims es) → SN (var x ∙ es)
 
-    zerec  : ∀{A C} {u : Tm Γ A} {v} {es : Elims Γ A C} (o : SN (u ◇ es)) → SN (zero ∙ rec u v ∷ es)
+    zerec  : ∀{A C} {u : Tm Γ A} {v} (ov : SN v) {es : Elims Γ A C} (o : SN (u ◇ es)) → SN (zero ∙ rec u v ∷ es)
     surec  : ∀{A C} {t : Tm Γ Nat} (n : Num t) {u : Tm Γ A} {v} {es : Elims Γ A C}
              (o : SN (v ◇ app t ∷ app (t ◇ rec u v ∷ []) ∷ es)) → SN (suc t ∙ rec u v ∷ es)
 
-    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} {es : Elims Γ B C}
+    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} (ou : SN u) {es : Elims Γ B C}
              (o : SN (t [ u ] ◇ es)) → SN (abs t ∙ app u ∷ es)
-
 
   data SNElim {Γ : Cxt} : {A C : Ty} (e : Elim Γ A C) → Set where
     app : ∀{A B} {u : Tm Γ A} (o : SN u) → SNElim {Γ} {A ⇒ B} (app u)
