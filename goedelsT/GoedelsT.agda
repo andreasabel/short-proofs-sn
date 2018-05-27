@@ -3,6 +3,8 @@
 {-# OPTIONS --rewriting #-}
 
 open import Data.Nat.Base using (ℕ; zero; suc)
+open import Data.Product using (∃; _,_)
+
 open import Relation.Binary.PropositionalEquality using (_≡_; refl; subst; cong)
 
 {-# BUILTIN REWRITE _≡_ #-}
@@ -429,7 +431,46 @@ mutual
     []  : SNElims []
     _∷_ : ∀{B C} {e : Elim Γ A B} (o : SNElim e) {es : Elims Γ B C} (os : SNElims es) → SNElims (e ∷ es)
 
--- Extract a normal form from Ω
+-- Extract a normal form from SN
+
+mutual
+
+  -- Applicative eliminations only:
+
+  data Nf {Γ : Cxt} : {C : Ty} (t : Tm Γ C) → Set where
+    zero   : Nf zero!
+    suc    : ∀{t} (o : Nf t) → Nf (suc! t)
+    abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (o : Nf t) → Nf (abs! t)
+    ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (os : NfElims es) → Nf (var x ∙ es)
+
+  data NfElim {Γ : Cxt} : {A C : Ty} (e : Elim Γ A C) → Set where
+    app : ∀{A B} {u : Tm Γ A} (o : Nf u) → NfElim {Γ} {A ⇒ B} (app u)
+    rec : ∀{C} {u : Tm Γ C} (ou : Nf u) {v : Tm Γ (Nat ⇒ C ⇒ C)} (ov : Nf v) → NfElim (rec u v)
+
+  data NfElims {Γ : Cxt} {A} : {C : Ty} (es : Elims Γ A C) → Set where
+    []  : NfElims []
+    _∷_ : ∀{B C} {e : Elim Γ A B} (o : NfElim e) {es : Elims Γ B C} (os : NfElims es) → NfElims (e ∷ es)
+
+-- Existence of a normal form
+
+NF      = λ Γ A   → ∃ (Nf {Γ} {A})
+NFElim  = λ Γ A B → ∃ (NfElim {Γ} {A} {B})
+NFElims = λ Γ A B → ∃ (NfElims {Γ} {A} {B})
+
+appNf : ∀{Γ A B} → NF Γ A → NFElim Γ (A ⇒ B) B
+appNf = {!!}
+
+mutual
+  nf : ∀{Γ A} {t : Tm Γ A} (sn : SN t) → NF Γ A
+  nf = {!!}
+
+  nfElim : ∀ {Γ A B} {e : Elim Γ A B} (sn : SNElim e) → NFElim Γ A B
+  nfElim (app u)   = appNf (nf u)
+  nfElim (rec u v) = {! recNf (nf u) (nf v) !}
+
+  nfElims : ∀ {Γ A B} {es : Elims Γ A B} (sn : SNElims es) → NFElims Γ A B
+  nfElims [] = [] , []
+  nfElims (e ∷ es) = {! consNF (nfElim e) (nfElims es) !}
 
 -- -}
 -- -}
