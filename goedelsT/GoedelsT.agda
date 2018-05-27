@@ -68,6 +68,10 @@ data Num {Γ : Cxt} : Tm Γ Nat → Set where
   zero : Num zero!
   suc  : ∀{t} (n : Num t) → Num (suc! t)
 
+numNum : ∀ n {Γ} → Num {Γ} (num n)
+numNum zero    = zero
+numNum (suc n) = suc (numNum n)
+
 -- Elimination concatenation
 
 _++_ : ∀{Γ A B C} (es : Elims Γ A B) (es' : Elims Γ B C) → Elims Γ A C
@@ -137,6 +141,29 @@ mutual
   wkElims τ []       = []
   wkElims τ (e ∷ es) = wkElim τ e ∷ wkElims τ es
 
+wkElims-++ : ∀{Γ Δ} {σ : Γ ≤ Δ} {A B C} (es : Elims Δ A B) {es' : Elims Δ B C}
+  → wkElims σ (es ++ es') ≡ wkElims σ es ++ wkElims σ es'
+wkElims-++ [] = refl
+wkElims-++ (e ∷ es) = cong (_ ∷_) (wkElims-++ es)
+
+{-# REWRITE wkElims-++ #-}
+
+wk-◇ : ∀{Γ Δ} {σ : Γ ≤ Δ} {A B} (t : Tm Δ A) {es : Elims Δ A B} →
+  wkTm σ (t ◇ es) ≡ wkTm σ t ◇ wkElims σ es
+wk-◇ (h ∙ es) = refl
+
+{-# REWRITE wk-◇ #-}
+
+wkNum : ∀ {Δ} {t : Tm Δ Nat} {Γ} (σ : Γ ≤ Δ) (n : Num t) → Num (wkTm σ t)
+wkNum σ zero    = zero
+wkNum σ (suc n) = suc (wkNum σ n)
+
+wk-num : ∀ {Γ Δ} {σ : Γ ≤ Δ} (n : ℕ) → wkTm σ (num n) ≡ num n
+wk-num zero = refl
+wk-num (suc n) = cong suc! (wk-num n)
+
+{-# REWRITE wk-num #-}
+
 -- Substitution
 
 data Sub (Γ : Cxt) : (Δ : Cxt) → Set where
@@ -203,18 +230,23 @@ subNum σ zero    = zero
 subNum σ (suc n) = suc (subNum σ n)
 
 sub-num : ∀ {Γ Δ} {σ : Sub Γ Δ} (n : ℕ) → subTm σ (num n) ≡ num n
-sub-num zero = refl
+sub-num zero    = refl
 sub-num (suc n) = cong suc! (sub-num n)
 
 {-# REWRITE sub-num #-}
+
+-- Goal: Ok ((subTm (liftSub .σ) .t [ subTm .σ .u ]) ◇ subElims .σ .es)
+-- Have: Ok (subTm .σ (subTm (sgSub .u) .t) ◇ subElims .σ .es)
 
 -- The Ω set
 
 mutual
 
+  -- Applicative eliminations only:
+
   data Oks {Γ : Cxt} : {A C : Ty} (es : Elims Γ A C) → Set where
     []  : ∀{A} → Oks {Γ} {A} {A} []
-    _∷_ : ∀{A B C} {u : Tm Γ A} (o : Ok u) {es : Elims Γ B C} (os : Oks es) → Oks (app u ∷ es)
+    cons : ∀ A B {C} {u : Tm Γ A} (o : Ok u) {es : Elims Γ B C} (os : Oks es) → Oks (app u ∷ es)
 
   data Ok {Γ : Cxt} : {C : Ty} (t : Tm Γ C) → Set where
     zero   : Ok zero!
@@ -241,8 +273,32 @@ mutual
 
 oks-snoc : ∀ {Γ A B C} {es : Elims Γ A (B ⇒ C)} {u : Tm Γ B} →
            (os : Oks es) (o : Ok u) → Oks (es ++ app u ∷ [])
-oks-snoc []       ou = ou ∷ []
-oks-snoc (o ∷ os) ou = o ∷ oks-snoc os ou
+oks-snoc []       ou = cons _ _ ou []
+oks-snoc (cons A B o os) ou = cons A B o (oks-snoc os ou)
+
+data OkElim {Γ : Cxt} : {A C : Ty} (e : Elim Γ A C) → Set where
+  app : ∀{A B} {u : Tm Γ A} (o : Ok u) → OkElim {Γ} {A ⇒ B} (app u)
+  rec : ∀{C} {u : Tm Γ C} (ou : Ok u) {v : Tm Γ (Nat ⇒ C ⇒ C)} (ov : Ok v) → OkElim (rec u v)
+
+data OkElims {Γ : Cxt} {A} : {C : Ty} (es : Elims Γ A C) → Set where
+  []  : OkElims []
+  _∷_ : ∀{B C} {e : Elim Γ A B} (o : OkElim e) {es : Elims Γ B C} (os : OkElims es) → OkElims (e ∷ es)
+
+mutual
+  wkOk : ∀ {B Γ} {t : Tm Γ B} {Γ'} (τ : Γ' ≤ Γ) (o : Ok t) → Ok (wkTm τ t)
+  wkOk τ zero        = zero
+  wkOk τ (suc o)     = suc (wkOk τ o)
+  wkOk τ (abs o)     = abs (wkOk (lift τ) o)
+  wkOk τ (ne x os)   = ne (wkVar τ x) (wkOks τ os)
+  wkOk τ (zerec o)   = zerec (wkOk τ o)
+  wkOk τ (surec n o) = surec (wkNum τ n) (wkOk τ o)
+  wkOk τ (beta o)    = {!beta (wkOk τ o)!}  -- need weakening composition
+  wkOk τ (omega o f) = omega (wkOk τ o) (λ n → wkOk τ (f n))
+
+  wkOks : ∀ {B Γ A} {es : Elims Γ A B} {Γ'} (τ : Γ' ≤ Γ) →
+          (os : Oks es) → Oks (wkElims τ es)
+  wkOks τ [] = []
+  wkOks τ (cons A B o os) = cons A B (wkOk τ o) (wkOks τ os)
 
 data Res A {Γ} : ∀{B} (t : Tm Γ B) → Set where
   rtm  : {t : Tm Γ A} (o : Ok t) → Res A t
@@ -251,9 +307,6 @@ data Res A {Γ} : ∀{B} (t : Tm Γ B) → Set where
 data OkSub A {Γ} : ∀{Δ} (σ : Sub Γ Δ) → Set where
   wk : ∀{Δ} (τ : Γ ≤ Δ) → OkSub A (wk τ)
   _∙_ : ∀{Δ B} {σ : Sub Γ Δ} (oσ : OkSub A σ) {t : Tm Γ B} (r : Res A t) → OkSub A (σ ∙ t)
-
-wkOk : ∀ {B Γ} {t : Tm Γ B} {Γ'} (τ : Γ' ≤ Γ) (o : Ok t) → Ok (wkTm τ t)
-wkOk = {!!}
 
 wkRes : ∀ {B Γ} {t : Tm Γ B} {A Γ'} (τ : Γ' ≤ Γ) (r : Res A t) → Res A (wkTm τ t)
 wkRes τ (rtm o)  = rtm (wkOk τ o)
@@ -271,34 +324,111 @@ liftOk oσ = wkOkSub (weak id≤) oσ ∙ rvar vz
 
 -- Show that Ω is closed under application and substitution
 
+subOkVar : ∀ A {Γ Δ} {σ : Sub Γ Δ} (oσ : OkSub A σ) {C} (x : Var Δ C) → Res A (subVar σ x)
+subOkVar A (wk τ) x = rvar (wkVar τ x)
+subOkVar A (oσ ∙ r) vz = r
+subOkVar A (oσ ∙ r) (vs x) = subOkVar A oσ x
+
 mutual
 
-  apply : ∀ A {Γ B} {t : Tm Γ (A ⇒ B)} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t ◇ app u ∷ [])
-  apply A (abs ot) ou = beta (sub A ot ou)
-  apply A (ne x os) ou = ne x (oks-snoc os ou)
-  apply A (zerec ot) ou = zerec (apply A ot ou)
-  apply A (surec n ot) ou = surec n (apply A ot ou)
-  apply A (beta ot) ou = beta (apply A ot ou)
-  apply A (omega ot f) ou = omega ot λ n → apply A (f n) ou
+  appOk : ∀ A {Γ B} {t : Tm Γ (A ⇒ B)} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t ◇ app u ∷ [])
+  appOk A (abs ot) ou = beta (subOk1 A ot ou)
+  appOk A (ne x os) ou = ne x (oks-snoc os ou)
+  appOk A (zerec ot) ou = zerec (appOk A ot ou)
+  appOk A (surec n ot) ou = surec n (appOk A ot ou)
+  appOk A (beta ot) ou = beta (appOk A ot ou)
+  appOk A (omega ot f) ou = omega ot λ n → appOk A (f n) ou
 
-  applys : ∀ {Γ A B} {t : Tm Γ A} (ot : Ok t) {es : Elims Γ A B} (os : Oks es) → Ok (t ◇ es)
-  applys ot []       = ot
-  applys ot (o ∷ os) = applys (apply _ ot o) os
+  appOks : ∀ A {Γ B} {t : Tm Γ A} (ot : Ok t) {es : Elims Γ A B} (os : Oks es) → Ok (t ◇ es)
+  appOks _         ot []             = ot
+  appOks .(A ⇒ B) ot (cons A B o os) = appOks B (appOk A ot o) os
 
-  subs : ∀ A {Γ Δ} {σ : Sub Γ Δ} (oσ : OkSub A σ) {C} {t : Tm Δ C} (o : Ok t) → Ok (subTm σ t)
-  subs A oσ zero = zero
-  subs A oσ (suc o) = suc (subs A oσ o)
-  subs A oσ (abs o) = abs (subs A (liftOk oσ) o)
-  subs A oσ (ne x os) = {!applys ? !}
-  subs A oσ (zerec o) = zerec (subs A oσ o)
-  subs A oσ (surec n o) = surec (subNum _ n) (subs A oσ o)
-  subs A oσ (beta o) = beta {!(subs A oσ o)!}  -- need substitution composition
-  subs A oσ (omega o f) = omega (subs A oσ o) (λ n → {!subs A oσ (f n)!})
+  appRes : ∀ A {Γ B C} {t : Tm Γ B} (ot : Res A t) {es : Elims Γ B C} (os : Oks es) → Ok (t ◇ es)
+  appRes A (rtm o) os = appOks A o os
+  appRes A (rvar x) os = ne x os
 
-  sub : ∀ A {Γ B} {t : Tm (Γ ∙ A) B} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t [ u ])
-  sub A ot ou = subs A (sgOk ou) ot
+  subOks : ∀ A {Γ Δ} {σ : Sub Γ Δ} (oσ : OkSub A σ) {B C} {es : Elims Δ B C} (os : Oks es) → Oks (subElims σ es)
+  subOks A oσ [] = []
+  subOks A oσ (cons B C o os) = cons B C (subOk A oσ o) (subOks A oσ os)
+
+  subOk : ∀ A {Γ Δ} {σ : Sub Γ Δ} (oσ : OkSub A σ) {C} {t : Tm Δ C} (o : Ok t) → Ok (subTm σ t)
+  subOk A oσ zero = zero
+  subOk A oσ (suc o) = suc (subOk A oσ o)
+  subOk A oσ (abs o) = abs (subOk A (liftOk oσ) o)
+  subOk A oσ (ne x os) = appRes A (subOkVar A oσ x) (subOks A oσ os)
+  subOk A oσ (zerec o) = zerec (subOk A oσ o)
+  subOk A oσ (surec n o) = surec (subNum _ n) (subOk A oσ o)
+  subOk A oσ (beta o) = beta {!(subOk A oσ o)!}  -- need substitution composition
+  subOk A oσ (omega o f) = omega (subOk A oσ o) (λ n → subOk A oσ (f n))
+
+  subOk1 : ∀ A {Γ B} {t : Tm (Γ ∙ A) B} {u : Tm Γ A} (ot : Ok t) (ou : Ok u) → Ok (t [ u ])
+  subOk1 A ot ou = subOk A (sgOk ou) ot
+
+-- Ω is closed under eliminations (not just applications)
+
+numOk : ∀ n {Γ} → Ok {Γ} (num n)
+numOk zero = zero
+numOk (suc n) = suc (numOk n)
+
+recOk : ∀ {B Γ} {u : Tm Γ B} {v : Tm Γ (Nat ⇒ B ⇒ B)} (ou : Ok u) (ov : Ok v) (n : ℕ) → Ok (num n ◇ rec u v ∷ [])
+recOk ou ov zero = zerec ou
+recOk ou ov (suc n) = surec (numNum n) (appOk _ (appOk _ ov (numOk n)) (recOk ou ov n))
+
+elimOk : ∀{Γ A B} {t : Tm Γ A} (ot : Ok t) {e : Elim Γ A B} (oe : OkElim e) → Ok (t ◇ e ∷ [])
+elimOk ot (app o)     = appOk _ ot o
+elimOk ot (rec ou ov) = omega ot (recOk ou ov)
+
+elimsOk : ∀{Γ A B} {t : Tm Γ A} (ot : Ok t) {es : Elims Γ A B} (os : OkElims es) → Ok (t ◇ es)
+elimsOk ot [] = ot
+elimsOk ot (o ∷ os) = elimsOk (elimOk ot o) os
 
 -- Show that every term is in Ω
+
+mutual
+  ok : ∀{Γ A} (t : Tm Γ A) → Ok t
+  ok (h ∙ es) = elimsOk (okHead h) (okElims es)
+
+  okHead : ∀ {Γ A} (h : Head Γ A) → Ok (h ∙ [])
+  okHead zero = zero
+  okHead (suc t) = suc (ok t)
+  okHead (abs t) = abs (ok t)
+  okHead (var x) = ne x []
+
+  okElim : ∀ {Γ A B} (e : Elim Γ A B) → OkElim e
+  okElim (app u) = app (ok u)
+  okElim (rec u v) = rec (ok u) (ok v)
+
+  okElims : ∀ {Γ A B} (es : Elims Γ A B) → OkElims es
+  okElims [] = []
+  okElims (e ∷ es) = okElim e ∷ okElims es
+
+-- Strong normalization
+
+mutual
+
+  -- Applicative eliminations only:
+
+  data SN {Γ : Cxt} : {C : Ty} (t : Tm Γ C) → Set where
+    zero   : SN zero!
+    suc    : ∀{t} (o : SN t) → SN (suc! t)
+    abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (o : SN t) → SN (abs! t)
+    ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (os : SNElims es) → SN (var x ∙ es)
+
+    zerec  : ∀{A C} {u : Tm Γ A} {v} {es : Elims Γ A C} (o : SN (u ◇ es)) → SN (zero ∙ rec u v ∷ es)
+    surec  : ∀{A C} {t : Tm Γ Nat} (n : Num t) {u : Tm Γ A} {v} {es : Elims Γ A C}
+             (o : SN (v ◇ app t ∷ app (t ◇ rec u v ∷ []) ∷ es)) → SN (suc t ∙ rec u v ∷ es)
+
+    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} {es : Elims Γ B C}
+             (o : SN (t [ u ] ◇ es)) → SN (abs t ∙ app u ∷ es)
+
+
+  data SNElim {Γ : Cxt} : {A C : Ty} (e : Elim Γ A C) → Set where
+    app : ∀{A B} {u : Tm Γ A} (o : SN u) → SNElim {Γ} {A ⇒ B} (app u)
+    rec : ∀{C} {u : Tm Γ C} (ou : SN u) {v : Tm Γ (Nat ⇒ C ⇒ C)} (ov : SN v) → SNElim (rec u v)
+
+  data SNElims {Γ : Cxt} {A} : {C : Ty} (es : Elims Γ A C) → Set where
+    []  : SNElims []
+    _∷_ : ∀{B C} {e : Elim Γ A B} (o : SNElim e) {es : Elims Γ B C} (os : SNElims es) → SNElims (e ∷ es)
 
 -- Extract a normal form from Ω
 
