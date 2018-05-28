@@ -183,7 +183,7 @@ liftSub : ∀{A Γ Δ} (σ : Sub Γ Δ) → Sub (Γ ∙ A) (Δ ∙ A)
 liftSub σ = wkSub (weak id≤) σ ∙ var! vz
 
 subVar : ∀ {C Γ Δ} (σ : Sub Γ Δ) (x : Var Δ C) → Tm Γ C
-subVar (wk τ) x       = var (wkVar τ x) ∙ []
+subVar (wk τ) x       = var! (wkVar τ x)
 subVar (σ ∙ u) vz     = u
 subVar (σ ∙ u) (vs x) = subVar σ x
 
@@ -239,6 +239,49 @@ sub-num (suc n) = cong suc! (sub-num n)
 
 -- Goal: Ok ((subTm (liftSub .σ) .t [ subTm .σ .u ]) ◇ subElims .σ .es)
 -- Have: Ok (subTm .σ (subTm (sgSub .u) .t) ◇ subElims .σ .es)
+
+-- Relational definition of substitution
+
+-- data WkVar : ∀ {Γ Δ} (σ : Γ ≤ Δ) {C} (x : Var Δ C) (x' : Var Γ C) → Set where
+
+data SubstVar : ∀ {Γ Δ} (σ : Sub Γ Δ) {C} (x : Var Δ C) (t' : Tm Γ C) → Set where
+  suwk : ∀{Γ Δ C} {τ : Γ ≤ Δ} {x : Var Δ C} {x'} (wx : wkVar τ x ≡ x') → SubstVar (wk τ) x (var! x')
+  suvz : ∀{Γ Δ C} {σ : Sub Γ Δ} {u : Tm Γ C} → SubstVar (σ ∙ u) vz u
+  suvs : ∀{Γ Δ A C} {σ : Sub Γ Δ} {u : Tm Γ A} {x : Var Δ C} {t'} → (sx : SubstVar σ x t') → SubstVar (σ ∙ u) (vs x) t'
+
+mutual
+  data SubstTm    {Γ Δ} (σ : Sub Γ Δ) : ∀{C} (t : Tm   Δ C) (t' : Tm Γ C) → Set where
+    _∙_ : ∀{A C} {h : Head Δ A} {t'} (sh : SubstHead σ h t')
+         {es : Elims Δ A C} {es'} (ses : SubstElims σ es es') → SubstTm σ (h ∙ es) (t' ◇ es')
+
+  data SubstHead  {Γ Δ} (σ : Sub Γ Δ) : ∀{C} (h : Head Δ C) (t' : Tm Γ C) → Set where
+    zero : SubstHead σ zero zero!
+    suc  : ∀ {t t'} (st : SubstTm σ t t') → SubstHead σ (suc t) (suc! t')
+    abs  : ∀{A B} {t : Tm (Δ ∙ A) B} {t'} (st : SubstTm (liftSub σ) t t') → SubstHead σ (abs t) (abs! t')
+    var  : ∀{C} {x : Var Δ C} {t'} (sx : SubstVar σ x t') → SubstHead σ (var x) t'
+
+  data SubstElim  {Γ Δ} (σ : Sub Γ Δ) : ∀{A C} (e : Elim Δ A C) (e' : Elim Γ A C) → Set where
+    app : ∀{A B} {u : Tm Δ A} {u'} (su : SubstTm σ u u') → SubstElim σ {A ⇒ B} (app u) (app u')
+    rec : ∀{C} {u : Tm Δ C} {u'} (su : SubstTm σ u u')
+          {v : Tm Δ (Nat ⇒ C ⇒ C)} {v'} (sv : SubstTm σ v v') → SubstElim σ (rec u v) (rec u' v')
+
+  data SubstElims {Γ Δ} (σ : Sub Γ Δ) {A} : ∀{C} (es : Elims Δ A C) (es' : Elims Γ A C) → Set where
+    [] : SubstElims σ [] []
+    _∷_ : ∀{B C}
+          {e : Elim Δ A B} {e'} (se : SubstElim σ e e')
+          {es : Elims Δ B C} {es'} (ses : SubstElims σ es es') → SubstElims σ (e ∷ es) (e' ∷ es')
+
+_++s_ : ∀ {Γ Δ} {σ : Sub Γ Δ} {A B C} {es₁ : Elims Δ A B} {es₁' : Elims Γ A B}
+          {es₂ : Elims Δ B C} {es₂' : Elims Γ B C} →
+        (ses₁ : SubstElims σ es₁ es₁')
+        (ses₂ : SubstElims σ es₂ es₂') → SubstElims σ (es₁ ++ es₂) (es₁' ++ es₂')
+[] ++s ses₂ = ses₂
+(se ∷ ses₁) ++s ses₂ = se ∷ (ses₁ ++s ses₂)
+
+_◇s_ : ∀{Γ Δ} {σ : Sub Γ Δ} {A C} {t : Tm Δ A} {t'} (sh : SubstTm σ t t')
+         {es : Elims Δ A C} {es'} (ses : SubstElims σ es es') → SubstTm σ (t ◇ es) (t' ◇ es')
+(sh ∙ ses) ◇s ses' = sh ∙ (ses ++s ses')
+
 
 -- The Ω set
 
@@ -408,34 +451,100 @@ mutual
 
 mutual
 
-  -- Applicative eliminations only:
-
   data SN {Γ : Cxt} : {C : Ty} (t : Tm Γ C) → Set where
     zero   : SN zero!
-    suc    : ∀{t} (o : SN t) → SN (suc! t)
-    abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (o : SN t) → SN (abs! t)
-    ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (os : SNElims es) → SN (var x ∙ es)
+    suc    : ∀{t} (sn : SN t) → SN (suc! t)
+    abs    : ∀{A B} {t : Tm (Γ ∙ A) B} (sn : SN t) → SN (abs! t)
+    ne     : ∀{A C} (x : Var Γ A) {es : Elims Γ A C} (sns : SNElims es) → SN (var x ∙ es)
 
-    zerec  : ∀{A C} {u : Tm Γ A} {v} (ov : SN v) {es : Elims Γ A C} (o : SN (u ◇ es)) → SN (zero ∙ rec u v ∷ es)
-    surec  : ∀{A C} {t : Tm Γ Nat} (n : Num t) {u : Tm Γ A} {v} {es : Elims Γ A C}
-             (o : SN (v ◇ app t ∷ app (t ◇ rec u v ∷ []) ∷ es)) → SN (suc t ∙ rec u v ∷ es)
+    zerec  : ∀{A C} {u : Tm Γ A} {v} (snv : SN v) {es : Elims Γ A C} (sn : SN (u ◇ es)) → SN (zero ∙ rec u v ∷ es)
+    surec  : ∀{A C} {t : Tm Γ Nat} (snt : SN t) {u : Tm Γ A} {v} {es : Elims Γ A C}
+             (sn : SN (v ◇ app t ∷ app (t ◇ rec u v ∷ []) ∷ es)) → SN (suc t ∙ rec u v ∷ es)
 
-    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} (ou : SN u) {es : Elims Γ B C}
-             (o : SN (t [ u ] ◇ es)) → SN (abs t ∙ app u ∷ es)
+    beta   : ∀{A B C} {t : Tm (Γ ∙ A) B} {u} (snu : SN u) {es : Elims Γ B C}
+             (sn : SN (t [ u ] ◇ es)) → SN (abs t ∙ app u ∷ es)
 
   data SNElim {Γ : Cxt} : {A C : Ty} (e : Elim Γ A C) → Set where
-    app : ∀{A B} {u : Tm Γ A} (o : SN u) → SNElim {Γ} {A ⇒ B} (app u)
-    rec : ∀{C} {u : Tm Γ C} (ou : SN u) {v : Tm Γ (Nat ⇒ C ⇒ C)} (ov : SN v) → SNElim (rec u v)
+    app : ∀{A B} {u : Tm Γ A} (sn : SN u) → SNElim {Γ} {A ⇒ B} (app u)
+    rec : ∀{C} {u : Tm Γ C} (snu : SN u) {v : Tm Γ (Nat ⇒ C ⇒ C)} (snv : SN v) → SNElim (rec u v)
 
   data SNElims {Γ : Cxt} {A} : {C : Ty} (es : Elims Γ A C) → Set where
     []  : SNElims []
-    _∷_ : ∀{B C} {e : Elim Γ A B} (o : SNElim e) {es : Elims Γ B C} (os : SNElims es) → SNElims (e ∷ es)
+    _∷_ : ∀{B C} {e : Elim Γ A B} (sn : SNElim e) {es : Elims Γ B C} (sns : SNElims es) → SNElims (e ∷ es)
 
+-- From Ω to SN
+
+-- Extract a numeral from SN terms of type Nat
+
+val : ∀{Γ} {t : Tm Γ Nat} (sn : SN t) → ℕ
+val zero = zero
+val (suc sn) = suc (val sn)
+val (ne x os) = zero
+val (zerec _ sn) = val sn
+val (surec _ sn) = val sn
+val (beta _ sn) = val sn
+
+-- Nat substitutions and their numeral value extraction
+
+data SNRes A {Γ} : ∀{B} (t : Tm Γ B) → Set where
+  rtm  : {t : Tm Γ A} (sn : SN t) → SNRes A t
+  rvar : ∀{B} (x : Var Γ B) → SNRes A (var! x)
+
+data SNSub A {Γ} : ∀{Δ} (σ : Sub Γ Δ) → Set where
+  wk : ∀{Δ} (τ : Γ ≤ Δ) → SNSub A (wk τ)
+  _∙_ : ∀{Δ B} {σ : Sub Γ Δ} (oσ : SNSub A σ) {t : Tm Γ B} (r : SNRes A t) → SNSub A (σ ∙ t)
+
+snSubVar : ∀{Γ Δ A} {σ : Sub Γ Δ} (sσ : SNSub A σ) {C} (x : Var Δ C) → SN (subVar σ x)
+snSubVar (wk τ)        x      = ne (wkVar τ x) []
+snSubVar (sσ ∙ rtm sn) vz     = sn
+snSubVar (sσ ∙ rvar x) vz     = ne x []
+snSubVar (sσ ∙ r)      (vs x) = snSubVar sσ x
+
+
+valr : ∀ {B Γ} {t : Tm Γ B} → SNRes Nat t → Tm Γ B
+valr (rtm sn) = num (val sn)
+valr (rvar x) = var! x
+
+vals : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) → Sub Γ Δ
+vals (wk τ) = wk τ
+vals (sσ ∙ r) = vals sσ ∙ valr r
+
+-- Value expansion lemma
+
+-- Need an inductive (relational) definition of substitution
+
+mutual
+  valexp : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {t : Tm Δ A} {t' : Tm Γ A} (st : SubstTm (vals sσ) t t') (sn : SN t') → SN (subTm σ t)
+  valexp sσ (zero ∙ []) zero = zero
+  valexp sσ (zero ∙ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn) -- {!valexp sσ su!}
+  valexp sσ (suc st ∙ []) (suc sn) = suc (valexp sσ st sn)
+  valexp sσ (suc st ∙ rec su sv ∷ ses) (surec snt sn) =
+    surec (valexp sσ st snt) (valexp sσ ( sv ◇s (app st ∷ app (st ◇s (rec su sv ∷ [])) ∷ ses)) sn)
+  valexp sσ (abs st ∙ []) (abs sn) = abs {!valexp ? st sn!}  -- Substitution lemma
+  valexp sσ (abs st ∙ app su ∷ ses) (beta snu sn) = beta (valexp sσ su snu) {!valexp ? ? sn!}
+  valexp (wk τ) (var (suwk refl) ∙ ses) (ne .(wkVar τ _) sns) = ne (wkVar τ _) (valexpElims (wk τ) ses sns)
+  valexp sσ (var _ ∙ []) _ = snSubVar sσ _
+  valexp (sσ ∙ rtm snt) (var suvz ∙ se ∷ ses) sn = {!!}
+  -- valexp (sσ ∙ rvar x) (var suvz ∙ []) (ne .x sns) = ne x []
+  valexp (sσ ∙ rvar x) (var suvz ∙ ses) (ne .x sns) = ne x (valexpElims (sσ ∙ rvar x) ses sns)
+  valexp (sσ ∙ rtm snt) (var (suvs sx) ∙ se ∷ ses) sn = {!!}
+  valexp (sσ ∙ rvar x) (var (suvs sx) ∙ ses) sn = {!sn!}
+
+  valexpVar : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {x : Var Δ A} {t' : Tm Γ A} (st : SubstVar (vals sσ) x t') (sn : SN t') → SN (subVar σ x)
+  valexpVar = {!!}
+
+  valexpElim : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A B} {e : Elim Δ A B} {e' : Elim Γ A B} (se : SubstElim (vals sσ) e e') (sn : SNElim e') → SNElim (subElim σ e)
+  valexpElim sσ (app su) (app sn) = app (valexp sσ su sn)
+  valexpElim sσ (rec su sv) (rec snu snv) = rec (valexp sσ su snu) (valexp sσ sv snv)
+
+  valexpElims : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A B} {es : Elims Δ A B} {es' : Elims Γ A B} (ses : SubstElims (vals sσ) es es') (sns : SNElims es') → SNElims (subElims σ es)
+  valexpElims sσ [] [] = []
+  valexpElims sσ (se ∷ ses) (sn ∷ sns) = valexpElim sσ se sn ∷ valexpElims sσ ses sns
+
+{-
 -- Extract a normal form from SN
 
 mutual
-
-  -- Applicative eliminations only:
 
   data Nf {Γ : Cxt} : {C : Ty} (t : Tm Γ C) → Set where
     zero   : Nf zero!
@@ -453,24 +562,56 @@ mutual
 
 -- Existence of a normal form
 
-NF      = λ Γ A   → ∃ (Nf {Γ} {A})
-NFElim  = λ Γ A B → ∃ (NfElim {Γ} {A} {B})
-NFElims = λ Γ A B → ∃ (NfElims {Γ} {A} {B})
+record NF Γ A : Set where
+  constructor norm; field
+    {t} : Tm Γ A
+    nf : Nf t
+
+record NFElim Γ A B : Set where
+  constructor normE; field
+    {e} : Elim Γ A B
+    nf  : NfElim e
+
+record NFElims Γ A B : Set where
+  constructor normEs; field
+    {es} : Elims Γ A B
+    nf  : NfElims es
 
 appNf : ∀{Γ A B} → NF Γ A → NFElim Γ (A ⇒ B) B
-appNf = {!!}
+appNf (norm u) = normE (app u)
+
+recNf : ∀ {B Γ} → NF Γ B → NF Γ (Nat ⇒ B ⇒ B) → NFElim Γ Nat B
+recNf (norm u) (norm v) = normE (rec u v)
+
+consNF : ∀ {B Γ A C} → NFElim Γ A B → NFElims Γ B C → NFElims Γ A C
+consNF (normE e) (normEs es) = normEs (e ∷ es)
+
+sucNf : ∀ {Γ} → NF Γ Nat → NF Γ Nat
+sucNf (norm t) = norm (suc t)
+
+absNf : ∀ {A B Γ} → NF (Γ ∙ A) B → NF Γ (A ⇒ B)
+absNf (norm t) = norm (abs t)
+
+neNf : ∀ {A Γ B} → Var Γ A → NFElims Γ A B → NF Γ B
+neNf x (normEs es) = norm (ne x es)
 
 mutual
   nf : ∀{Γ A} {t : Tm Γ A} (sn : SN t) → NF Γ A
-  nf = {!!}
+  nf zero = norm zero
+  nf (suc sn) = sucNf (nf sn)
+  nf (abs sn) = absNf (nf sn)
+  nf (ne x os) = neNf x (nfElims os)
+  nf (zerec _ sn) = nf sn
+  nf (surec _ sn) = nf sn
+  nf (beta _ sn) = nf sn
 
   nfElim : ∀ {Γ A B} {e : Elim Γ A B} (sn : SNElim e) → NFElim Γ A B
   nfElim (app u)   = appNf (nf u)
-  nfElim (rec u v) = {! recNf (nf u) (nf v) !}
+  nfElim (rec u v) = recNf (nf u) (nf v)
 
   nfElims : ∀ {Γ A B} {es : Elims Γ A B} (sn : SNElims es) → NFElims Γ A B
-  nfElims [] = [] , []
-  nfElims (e ∷ es) = {! consNF (nfElim e) (nfElims es) !}
+  nfElims []       = normEs []
+  nfElims (e ∷ es) =  consNF (nfElim e) (nfElims es)
 
 -- -}
 -- -}
