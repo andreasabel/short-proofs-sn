@@ -13,8 +13,8 @@ data Ty : Set where
   Nat : Ty
   _⇒_ : (A B : Ty) → Ty
 
-infixr 6 _⇒_ _∷_ _++_
-infixl 5 _∙_ _◇_
+infixr 6 _⇒_ _∷_ _++_ _++s_
+infixl 5 _∙_ _◇_ _∙′_ _◇s_
 
 data Cxt : Set where
   ε : Cxt
@@ -102,6 +102,11 @@ _◇_ (h ∙ es) es' = h ∙ es ++ es'
 
 {-# REWRITE ◇-[] ◇-++ #-}
 
+-- Appending eliminations
+
+data Append {Γ} : ∀{A} (t : Tm Γ A) {B} (es : Elims Γ A B) (t' : Tm Γ B) → Set where
+  append : ∀{A B C} {h : Head Γ A} {es : Elims Γ A B} {es' : Elims Γ B C}
+           → Append (h ∙ es) es' (h ∙ es ++ es')
 
 -- Weakening
 
@@ -247,12 +252,13 @@ sub-num (suc n) = cong suc! (sub-num n)
 data SubstVar : ∀ {Γ Δ} (σ : Sub Γ Δ) {C} (x : Var Δ C) (t' : Tm Γ C) → Set where
   suwk : ∀{Γ Δ C} {τ : Γ ≤ Δ} {x : Var Δ C} {x'} (wx : wkVar τ x ≡ x') → SubstVar (wk τ) x (var! x')
   suvz : ∀{Γ Δ C} {σ : Sub Γ Δ} {u : Tm Γ C} → SubstVar (σ ∙ u) vz u
-  suvs : ∀{Γ Δ A C} {σ : Sub Γ Δ} {u : Tm Γ A} {x : Var Δ C} {t'} → (sx : SubstVar σ x t') → SubstVar (σ ∙ u) (vs x) t'
+  suvs : ∀{Γ Δ A C} {σ : Sub Γ Δ} {u : Tm Γ A} {x : Var Δ C} {t'} (sx : SubstVar σ x t') → SubstVar (σ ∙ u) (vs x) t'
 
 mutual
   data SubstTm    {Γ Δ} (σ : Sub Γ Δ) : ∀{C} (t : Tm   Δ C) (t' : Tm Γ C) → Set where
-    _∙_ : ∀{A C} {h : Head Δ A} {t'} (sh : SubstHead σ h t')
-         {es : Elims Δ A C} {es'} (ses : SubstElims σ es es') → SubstTm σ (h ∙ es) (t' ◇ es')
+    _∙_∣_ : ∀{A C} {h : Head Δ A} {t'} (sh : SubstHead σ h t')
+         {es : Elims Δ A C} {es'} (ses : SubstElims σ es es') {t'' : Tm Γ C}
+         (apd : Append t' es' t'') → SubstTm σ (h ∙ es) t'' -- (t' ◇ es')
 
   data SubstHead  {Γ Δ} (σ : Sub Γ Δ) : ∀{C} (h : Head Δ C) (t' : Tm Γ C) → Set where
     zero : SubstHead σ zero zero!
@@ -271,6 +277,9 @@ mutual
           {e : Elim Δ A B} {e'} (se : SubstElim σ e e')
           {es : Elims Δ B C} {es'} (ses : SubstElims σ es es') → SubstElims σ (e ∷ es) (e' ∷ es')
 
+
+pattern _∙′_ sh ses = sh ∙ ses ∣ append
+
 _++s_ : ∀ {Γ Δ} {σ : Sub Γ Δ} {A B C} {es₁ : Elims Δ A B} {es₁' : Elims Γ A B}
           {es₂ : Elims Δ B C} {es₂' : Elims Γ B C} →
         (ses₁ : SubstElims σ es₁ es₁')
@@ -280,7 +289,7 @@ _++s_ : ∀ {Γ Δ} {σ : Sub Γ Δ} {A B C} {es₁ : Elims Δ A B} {es₁' : El
 
 _◇s_ : ∀{Γ Δ} {σ : Sub Γ Δ} {A C} {t : Tm Δ A} {t'} (sh : SubstTm σ t t')
          {es : Elims Δ A C} {es'} (ses : SubstElims σ es es') → SubstTm σ (t ◇ es) (t' ◇ es')
-(sh ∙ ses) ◇s ses' = sh ∙ (ses ++s ses')
+sh ∙′ ses ◇s ses' = sh ∙′ (ses ++s ses')
 
 
 -- The Ω set
@@ -515,20 +524,33 @@ vals (sσ ∙ r) = vals sσ ∙ valr r
 
 mutual
   valexp : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {t : Tm Δ A} {t' : Tm Γ A} (st : SubstTm (vals sσ) t t') (sn : SN t') → SN (subTm σ t)
-  valexp sσ (zero ∙ []) zero = zero
-  valexp sσ (zero ∙ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn) -- {!valexp sσ su!}
-  valexp sσ (suc st ∙ []) (suc sn) = suc (valexp sσ st sn)
-  valexp sσ (suc st ∙ rec su sv ∷ ses) (surec snt sn) =
+  valexp sσ (zero ∙′ []) zero = {!!}
+  valexp sσ (zero ∙ se ∷ ses ∣ ()) zero
+  valexp sσ (suc st ∙ ses ∣ ()) zero
+  valexp sσ (abs st ∙ ses ∣ ()) zero
+  valexp sσ (var sx ∙ [] ∣ apd) zero = snSubVar sσ _
+  valexp sσ (var sx ∙ se ∷ ses ∣ apd) zero = {!apd!}
+  valexp sσ st (suc sn) = {!!}
+  valexp sσ st (abs sn) = {!!}
+  valexp sσ st (ne x sns) = {!!}
+  valexp sσ st (zerec sn sn₁) = {!!}
+  valexp sσ st (surec sn sn₁) = {!!}
+  valexp sσ st (beta sn sn₁) = {!!}
+
+  valexp sσ (zero ∙′ []) zero = zero
+  valexp sσ (zero ∙′ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn) -- {!valexp sσ su!}
+  valexp sσ (suc st ∙′ []) (suc sn) = suc (valexp sσ st sn)
+  valexp sσ (suc st ∙′ rec su sv ∷ ses) (surec snt sn) =
     surec (valexp sσ st snt) (valexp sσ ( sv ◇s (app st ∷ app (st ◇s (rec su sv ∷ [])) ∷ ses)) sn)
-  valexp sσ (abs st ∙ []) (abs sn) = abs {!valexp ? st sn!}  -- Substitution lemma
-  valexp sσ (abs st ∙ app su ∷ ses) (beta snu sn) = beta (valexp sσ su snu) {!valexp ? ? sn!}
-  valexp (wk τ) (var (suwk refl) ∙ ses) (ne .(wkVar τ _) sns) = ne (wkVar τ _) (valexpElims (wk τ) ses sns)
-  valexp sσ (var _ ∙ []) _ = snSubVar sσ _
-  valexp (sσ ∙ rtm snt) (var suvz ∙ se ∷ ses) sn = {!!}
-  -- valexp (sσ ∙ rvar x) (var suvz ∙ []) (ne .x sns) = ne x []
-  valexp (sσ ∙ rvar x) (var suvz ∙ ses) (ne .x sns) = ne x (valexpElims (sσ ∙ rvar x) ses sns)
-  valexp (sσ ∙ rtm snt) (var (suvs sx) ∙ se ∷ ses) sn = {!!}
-  valexp (sσ ∙ rvar x) (var (suvs sx) ∙ ses) sn = {!sn!}
+  valexp sσ (abs st ∙′ []) (abs sn) = abs {!valexp ? st sn!}  -- Substitution lemma
+  valexp sσ (abs st ∙′ app su ∷ ses) (beta snu sn) = beta (valexp sσ su snu) {!valexp ? ? sn!}
+  valexp (wk τ) (var (suwk refl) ∙′ ses) (ne .(wkVar τ _) sns) = ne (wkVar τ _) (valexpElims (wk τ) ses sns)
+  valexp sσ (var _ ∙′ []) _ = snSubVar sσ _
+  valexp (sσ ∙ rtm snt) (var suvz ∙ se ∷ ses ∣ apd) sn = {!!}
+  -- valexp (sσ ∙ rvar x) (var suvz ∙′ []) (ne .x sns) = ne x []
+  valexp (sσ ∙ rvar x) (var suvz ∙′ ses) (ne .x sns) = ne x (valexpElims (sσ ∙ rvar x) ses sns)
+  valexp (sσ ∙ rtm snt) (var (suvs sx) ∙′ se ∷ ses) sn = {!!}
+  valexp (sσ ∙ rvar x) (var (suvs sx) ∙′ ses) sn = {!sn!}
 
   valexpVar : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {x : Var Δ A} {t' : Tm Γ A} (st : SubstVar (vals sσ) x t') (sn : SN t') → SN (subVar σ x)
   valexpVar = {!!}
