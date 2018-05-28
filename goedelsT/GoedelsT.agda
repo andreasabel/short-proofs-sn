@@ -2,6 +2,7 @@
 
 {-# OPTIONS --rewriting #-}
 
+open import Data.Empty using (⊥; ⊥-elim)
 open import Data.Nat.Base using (ℕ; zero; suc)
 open import Data.Product using (∃; _,_)
 
@@ -104,9 +105,22 @@ _◇_ (h ∙ es) es' = h ∙ es ++ es'
 
 -- Appending eliminations
 
+-- data Append {Γ} : ∀{A} (t : Tm Γ A) {B} (es : Elims Γ A B) (t' : Tm Γ B) → Set where
+--   append : ∀{A B C} {h : Head Γ A} {es : Elims Γ A B}
+--            → Append (h ∙ es) [] (h ∙ es)
+--   append : ∀{A B C} {h : Head Γ A} {es : Elims Γ A B} {es' : Elims Γ B C}
+--            → Append (h ∙ es ++ e ∷ []) es'
+--            → Append (h ∙ es) (e ∷ es') (h ∙ es ++ es')
+
 data Append {Γ} : ∀{A} (t : Tm Γ A) {B} (es : Elims Γ A B) (t' : Tm Γ B) → Set where
   append : ∀{A B C} {h : Head Γ A} {es : Elims Γ A B} {es' : Elims Γ B C}
            → Append (h ∙ es) es' (h ∙ es ++ es')
+
+headIsNotAppend : ∀{Γ A B C} (t : Tm Γ A) {e : Elim Γ A B} {es : Elims Γ B C} {h : Head Γ C}
+  (apd : Append t (e ∷ es) (h ∙ [])) → ∀{ℓ}{X : Set ℓ} → X
+headIsNotAppend (h ∙ []) ()
+headIsNotAppend (h ∙ e ∷ es) ()
+
 
 -- Weakening
 
@@ -251,8 +265,10 @@ sub-num (suc n) = cong suc! (sub-num n)
 
 data SubstVar : ∀ {Γ Δ} (σ : Sub Γ Δ) {C} (x : Var Δ C) (t' : Tm Γ C) → Set where
   suwk : ∀{Γ Δ C} {τ : Γ ≤ Δ} {x : Var Δ C} {x'} (wx : wkVar τ x ≡ x') → SubstVar (wk τ) x (var! x')
-  suvz : ∀{Γ Δ C} {σ : Sub Γ Δ} {u : Tm Γ C} → SubstVar (σ ∙ u) vz u
+  suvz : ∀{Γ Δ C} {σ : Sub Γ Δ} {u t' : Tm Γ C} (eq : u ≡ t') → SubstVar (σ ∙ u) vz t'
   suvs : ∀{Γ Δ A C} {σ : Sub Γ Δ} {u : Tm Γ A} {x : Var Δ C} {t'} (sx : SubstVar σ x t') → SubstVar (σ ∙ u) (vs x) t'
+
+pattern suvz! = suvz refl
 
 mutual
   data SubstTm    {Γ Δ} (σ : Sub Γ Δ) : ∀{C} (t : Tm   Δ C) (t' : Tm Γ C) → Set where
@@ -523,20 +539,72 @@ vals (sσ ∙ r) = vals sσ ∙ valr r
 -- Need an inductive (relational) definition of substitution
 
 mutual
+  SNElims' : ∀ {Γ A B C Δ} (es₀ : Elims Γ A B) (σ : Sub Γ Δ) (es : Elims Δ B C) → Set
+  SNElims' {Γ} {A} {B} es₀ σ es = (eqT : B ≡ A) (eq : subst (Elims Γ A) eqT es₀ ≡ []) → SNElims (subElims σ es)
+
+  valexpElims' : ∀ {Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ)
+            {A B C} {es₀ : Elims Γ A B} {es' : Elims Γ B C} {es : Elims Δ B C}
+            (ses : SubstElims (vals sσ) es es') →
+            (sns : SNElims (es₀ ++ es')) → SNElims' es₀ σ es
+            -- (eqT : B ≡ A)
+            -- (eq : subst (Elims Γ A) eqT es₀ ≡ []) → SNElims (subElims σ es)
+  valexpElims' sσ ses sns refl refl = valexpElims sσ ses sns
+
+  valexpVar : ∀ {A Γ B C} {es₀ : Elims Γ A B}
+              {Δ} {x : Var Δ B} {es : Elims Δ B C} {σ : Sub Γ Δ}
+              (sσ : SNSub Nat σ) (x' : Var Γ A) →
+            (sx  : SubstVar (vals sσ) x (var x' ∙ es₀)) →
+            (sns : SNElims' es₀ σ es) → SN (subVar σ x ◇ subElims σ es)
+  valexpVar (wk τ) x' (suwk wx) sns = ne (wkVar τ _) (sns refl refl)
+  valexpVar (sσ ∙ rtm sn) x' (suvz eq) sns = {!!}  -- refute eq : num _ = var _ ∙ _
+  valexpVar (sσ ∙ rtm sn) x' (suvs sx) sns = valexpVar sσ x' sx sns
+  valexpVar (sσ ∙ rvar x) .x suvz! sns = ne x (sns refl refl)
+  valexpVar (sσ ∙ rvar x) x' (suvs sx) sns = valexpVar sσ x' sx sns
+
+
+  -- valexpVar : ∀ {A Γ B C} {es₀ : Elims Γ A B} {es' : Elims Γ B C}
+  --             {Δ} {x : Var Δ B} {es : Elims Δ B C} {σ : Sub Γ Δ}
+  --             (sσ : SNSub Nat σ) (x' : Var Γ A) →
+  --           (sx  : SubstVar (vals sσ) x (var x' ∙ es₀)) →
+  --           (ses : SubstElims (vals sσ) es es') →
+  --           (sns : SNElims (es₀ ++ es')) → SN (subVar σ x ◇ subElims σ es)
+  -- valexpVar (wk τ) x' (suwk wx) ses sns = ne (wkVar τ _) (valexpElims (wk τ) ses sns)
+  -- valexpVar (sσ ∙ rtm sn) x' (suvz eq) ses sns = {!!}  -- refute eq : num _ = var _ ∙ _
+  -- valexpVar (sσ ∙ rtm sn) x' (suvs sx) ses sns = {!valexpVar sσ x' sx ses sns!}
+  -- valexpVar (sσ ∙ rvar x) .x suvz! ses sns = ne x (valexpElims (sσ ∙ rvar x) ses sns)
+  -- valexpVar (sσ ∙ rvar x) x' (suvs sx) ses sns = {!valexpVar sσ x' sx ses sns!}
+
+
   valexp : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {t : Tm Δ A} {t' : Tm Γ A} (st : SubstTm (vals sσ) t t') (sn : SN t') → SN (subTm σ t)
-  valexp sσ (zero ∙′ []) zero = {!!}
+  -- Cases on SN t'
+  -- Case zero:
+  valexp sσ (zero ∙′ []) zero = zero
+  valexp sσ (var sx ∙ [] ∣ apd) zero = snSubVar sσ _
+  -- Impossible subcases
+  valexp sσ (var sx ∙ se ∷ ses ∣ apd) zero = headIsNotAppend _ apd
   valexp sσ (zero ∙ se ∷ ses ∣ ()) zero
   valexp sσ (suc st ∙ ses ∣ ()) zero
   valexp sσ (abs st ∙ ses ∣ ()) zero
-  valexp sσ (var sx ∙ [] ∣ apd) zero = snSubVar sσ _
-  valexp sσ (var sx ∙ se ∷ ses ∣ apd) zero = {!apd!}
-  valexp sσ st (suc sn) = {!!}
+
+  -- Case suc:
+  valexp sσ (suc st ∙′ []) (suc sn) = suc (valexp sσ st sn)
+  valexp sσ (var sx ∙ [] ∣ apd) (suc sn) = snSubVar sσ _
+  -- Impossible subcases
+  valexp sσ (var sx ∙ se ∷ ses ∣ apd) (suc sn) = headIsNotAppend _ apd
+  valexp sσ (zero ∙ ses ∣ ()) (suc sn)
+  valexp sσ (suc st ∙ se ∷ ses ∣ ()) (suc sn)
+  valexp sσ (abs st ∙ ses ∣ ()) (suc sn)
+
   valexp sσ st (abs sn) = {!!}
-  valexp sσ st (ne x sns) = {!!}
+  valexp sσ (zero ∙ ses ∣ ()) (ne x sns)
+  valexp sσ (suc st ∙ ses ∣ ()) (ne x sns)
+  valexp sσ (abs st ∙ ses ∣ ()) (ne x sns)
+  valexp sσ (var sx ∙′ ses) (ne x sns) = {!(valexpElims sσ ses sns)!} -- valexpVar sσ x sx
   valexp sσ st (zerec sn sn₁) = {!!}
   valexp sσ st (surec sn sn₁) = {!!}
   valexp sσ st (beta sn sn₁) = {!!}
 
+{-
   valexp sσ (zero ∙′ []) zero = zero
   valexp sσ (zero ∙′ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn) -- {!valexp sσ su!}
   valexp sσ (suc st ∙′ []) (suc sn) = suc (valexp sσ st sn)
@@ -554,7 +622,7 @@ mutual
 
   valexpVar : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A} {x : Var Δ A} {t' : Tm Γ A} (st : SubstVar (vals sσ) x t') (sn : SN t') → SN (subVar σ x)
   valexpVar = {!!}
-
+-}
   valexpElim : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) {A B} {e : Elim Δ A B} {e' : Elim Γ A B} (se : SubstElim (vals sσ) e e') (sn : SNElim e') → SNElim (subElim σ e)
   valexpElim sσ (app su) (app sn) = app (valexp sσ su sn)
   valexpElim sσ (rec su sv) (rec snu snv) = rec (valexp sσ su snu) (valexp sσ sv snv)
