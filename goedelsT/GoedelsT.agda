@@ -19,7 +19,7 @@ data Ty : Set where
   Nat : Ty
   _⇒_ : (A B : Ty) → Ty
 
-infixr 6 _⇒_ _∷_ _++_ _++s_
+infixr 6 _⇒_ _∷_ _++_ _++s_ _++sn_
 infixl 5 _∙_ _◇_ _∙′_ _◇s_
 
 data Cxt : Set where
@@ -510,6 +510,10 @@ mutual
     []  : SNElims []
     _∷_ : ∀{B C} {e : Elim Γ A B} (sn : SNElim e) {es : Elims Γ B C} (sns : SNElims es) → SNElims (e ∷ es)
 
+_++sn_ : ∀{Γ A B C} {es : Elims Γ A B} (sns : SNElims es) {es' : Elims Γ B C} (sns' : SNElims es') → SNElims (es ++ es')
+[] ++sn sns = sns
+(sn ∷ sns) ++sn sns' = sn ∷ (sns ++sn sns')
+
 mutual
   wkSN : ∀{Γ Δ} (τ : Γ ≤ Δ) {C} {t : Tm Δ C} (sn : SN t) → SN (wkTm τ t)
   wkSN τ zero = zero
@@ -711,25 +715,38 @@ mutual
               SN (subVar σ x ◇ subElims σ es)
   valExpZeRec (wk τ) (suwk wx) ses () snv snus
   valExpZeRec (sσ ∙ rtm sn) (suvz eq) [] append snv snus = numNotElim _ eq
-  valExpZeRec {Γ} {t' = zero!} (_∙_ {σ = σ} sσ (rtm sn)) (suvz eq) (_∷_ (rec {u = u} su {v} sv) {es} ses) {u'} {v'} append snv snus = {!valexpElims (sσ ∙ rtm sn) ses ?!}
+  valExpZeRec {Γ} {t' = zero!} (_∙_ {σ = σ} sσ (rtm sn)) (suvz eq) (_∷_ (rec {u = u} su {v} sv) {es} {es'} ses) {u'} {v'} append snv snus = aux _ sn eq su sv ses
     -- aux sn eq su sv ses    -- induction on sn
     where
-    snv' : SN (subTm (σ ∙ _) v
+    snv' : SN (subTm (σ ∙ _) v)
     snv' = valexp (sσ ∙ rtm sn) sv snv
-    snu' : SN (subTm (σ ∙ _) u
-    snu' = valexp (sσ ∙ rtm sn) su ?  -- snu from (snus : SN (u ◇ esᵣ)
-    aux : ∀ {t : Tm Γ Nat} (sn : SN t) →
+    snu' : SN (subTm (σ ∙ _) u)
+    snu' = valexp (sσ ∙ rtm sn) su {!!}  -- snu from (snus : SN (u ◇ esᵣ)
+    aux : ∀ (t : Tm Γ Nat) (sn : SN t) →
       (eq : num (val sn) ≡ zero!) →
       (su : SubstTm (vals sσ ∙ num (val sn)) u u') →
       (sv : SubstTm (vals sσ ∙ num (val sn)) v v') →
-      (ses : SubstElims (vals sσ ∙ num (val sn)) _ _) →  -- es es'
+      (ses : SubstElims (vals sσ ∙ num (val sn)) es es') →  -- es es'
       SN (t ◇ rec (subTm (σ ∙ t) u) (subTm (σ ∙ t) v) ∷ subElims (σ ∙ t) es)
-    aux zero eq su sv ses = zerec {!!} {!!}
-    aux (suc sn) () su sv ses
-    aux (ne x sns) eq su sv ses = {!!}
-    aux (zerec snv sn) eq su sv ses = {!zerec snv (aux sn eq su sv ses)!}
-    aux (surec snt sn) eq su sv ses = {!!}
-    aux (beta  snu sn) eq su sv ses = {!!}
+    aux t1 zero eq su sv ses = zerec (valexp (sσ ∙ rtm zero) sv snv) (valexp (sσ ∙ rtm zero) (su ◇s ses) snus)
+    aux t1 (suc sn) () su sv ses
+    aux t1 (ne x {es₀} sns) eq su sv ses = ne x (sns ++sn rec snu {!!} ∷ valexpElims (sσ ∙ {!!}) {! ses !} {!(valexp (sσ ∙ rtm zero) (su ◇s ses) snus)!})
+      where
+      snus' : SN (subTm (σ ∙ (var x ∙ es₀)) u ◇ subElims (σ ∙ (var x ∙ es₀)) es)
+      snus' = (valexp (sσ ∙ rtm (ne x sns)) (su ◇s ses) snus)
+      snu   : SN (subTm (σ ∙ (var x ∙ es₀)) u)
+      snu   = {!!}
+      snes' : SNElims (subElims (σ ∙ (var x ∙ es₀)) es)
+      snes' = {!!}
+      -- snus' : SN (subTm (σ ∙ zero!) u ◇ subElims (σ ∙ zero!) es)
+      -- snus' = (valexp (sσ ∙ rtm zero) (su ◇s ses) snus)
+      -- snu   : SN (subTm (σ ∙ zero!) u)
+      -- snu   = {!!}
+      -- snes' : SNElims (subElims (σ ∙ zero!) es)
+      -- snes' = {!!}
+    aux t1 (zerec snv sn) eq su sv ses = {!zerec snv (aux sn eq su sv ses)!}
+    aux t1 (surec snt sn) eq su sv ses = surec snt {!aux sn eq su sv!}
+    aux .(abs t ∙ app _ ∷ _) (beta {t = t} snu sn) eq su sv ses = {!!}
     -- aux : ∀ {B Γ} {u' : Tm Γ B} {v' : Tm Γ (Nat ⇒ B ⇒ B)} {D}
     --     {es' : Elims Γ B D} {Δ} {u : Tm (Δ ∙ Nat) B}
     --     {v : Tm (Δ ∙ Nat) (Nat ⇒ B ⇒ B)} {es : Elims (Δ ∙ Nat) B D}
