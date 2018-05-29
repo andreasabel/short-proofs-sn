@@ -6,9 +6,14 @@ open import Data.Empty using (⊥; ⊥-elim)
 open import Data.Nat.Base using (ℕ; zero; suc)
 open import Data.Product using (∃; _,_)
 
-open import Relation.Binary.PropositionalEquality using (_≡_; refl; subst; cong)
+open import Relation.Binary.PropositionalEquality using (_≡_; refl; subst; cong; cong₂)
 
 {-# BUILTIN REWRITE _≡_ #-}
+
+Absurd : ∀ ℓ → Set _
+Absurd ℓ = ∀{X : Set ℓ} → X
+
+-- Absurd = ∀{ℓ}{X : Set ℓ} → X  -- Setω
 
 data Ty : Set where
   Nat : Ty
@@ -75,6 +80,10 @@ numNum : ∀ n {Γ} → Num {Γ} (num n)
 numNum zero    = zero
 numNum (suc n) = suc (numNum n)
 
+numNotVar : ∀ (n : ℕ) {Γ A} {x : Var Γ A} {es : Elims Γ A Nat} (eq : num n ≡ var x ∙ es) → ∀{ℓ} → Absurd ℓ
+numNotVar zero ()
+numNotVar (suc n) ()
+
 -- Elimination concatenation
 
 _++_ : ∀{Γ A B C} (es : Elims Γ A B) (es' : Elims Γ B C) → Elims Γ A C
@@ -117,7 +126,7 @@ data Append {Γ} : ∀{A} (t : Tm Γ A) {B} (es : Elims Γ A B) (t' : Tm Γ B) �
            → Append (h ∙ es) es' (h ∙ es ++ es')
 
 headIsNotAppend : ∀{Γ A B C} (t : Tm Γ A) {e : Elim Γ A B} {es : Elims Γ B C} {h : Head Γ C}
-  (apd : Append t (e ∷ es) (h ∙ [])) → ∀{ℓ}{X : Set ℓ} → X
+  (apd : Append t (e ∷ es) (h ∙ [])) → ∀{ℓ} → Absurd ℓ
 headIsNotAppend (h ∙ []) ()
 headIsNotAppend (h ∙ e ∷ es) ()
 
@@ -497,6 +506,24 @@ mutual
     []  : SNElims []
     _∷_ : ∀{B C} {e : Elim Γ A B} (sn : SNElim e) {es : Elims Γ B C} (sns : SNElims es) → SNElims (e ∷ es)
 
+mutual
+  wkSN : ∀{Γ Δ} (τ : Γ ≤ Δ) {C} {t : Tm Δ C} (sn : SN t) → SN (wkTm τ t)
+  wkSN τ zero = zero
+  wkSN τ (suc sn) = suc (wkSN τ sn)
+  wkSN τ (abs sn) = abs (wkSN (lift τ) sn)
+  wkSN τ (ne x sns) = ne (wkVar τ x) (wkSNElims τ sns)
+  wkSN τ (zerec snv sn) = zerec (wkSN τ snv) (wkSN τ sn)
+  wkSN τ (surec snt sn) = surec (wkSN τ snt) (wkSN τ sn)
+  wkSN τ (beta snu sn) = beta (wkSN τ snu) {! (wkSN τ sn) !}  -- need substitution lemma
+
+  wkSNElim : ∀{Γ Δ} (τ : Γ ≤ Δ) {A B} {e : Elim Δ A B} (sn : SNElim e) → SNElim (wkElim τ e)
+  wkSNElim τ (app sn) = app (wkSN τ sn)
+  wkSNElim τ (rec snu snv) = rec (wkSN τ snu) (wkSN τ snv)
+
+  wkSNElims : ∀{Γ Δ} (τ : Γ ≤ Δ) {A B} {es : Elims Δ A B} (sn : SNElims es) → SNElims (wkElims τ es)
+  wkSNElims τ [] = []
+  wkSNElims τ (sn ∷ sns) = wkSNElim τ sn ∷ wkSNElims τ sns
+
 -- From Ω to SN
 
 -- Extract a numeral from SN terms of type Nat
@@ -508,6 +535,17 @@ val (ne x os) = zero
 val (zerec _ sn) = val sn
 val (surec _ sn) = val sn
 val (beta _ sn) = val sn
+
+
+wkVal : ∀{Γ Δ} (τ : Γ ≤ Δ) {t : Tm Δ Nat} (sn : SN t) → val (wkSN τ sn) ≡ val sn
+wkVal τ zero = refl
+wkVal τ (suc sn) = cong suc (wkVal τ sn)
+wkVal τ (ne x sns) = refl
+wkVal τ (zerec _ sn) = wkVal τ sn
+wkVal τ (surec _ sn) = wkVal τ sn
+wkVal τ (beta  _ sn) = wkVal τ sn
+
+{-# REWRITE wkVal #-}
 
 -- Nat substitutions and their numeral value extraction
 
@@ -525,6 +563,18 @@ snSubVar (sσ ∙ rtm sn) vz     = sn
 snSubVar (sσ ∙ rvar x) vz     = ne x []
 snSubVar (sσ ∙ r)      (vs x) = snSubVar sσ x
 
+wkSNRes : ∀{Γ Δ} (τ : Γ ≤ Δ) {A B} {t : Tm Δ B} (r : SNRes A t) → SNRes A (wkTm τ t)
+wkSNRes τ (rtm sn) = rtm (wkSN τ sn)
+wkSNRes τ (rvar x) = rvar (wkVar τ x)
+
+wkSNSub : ∀{Γ Δ} (τ : Γ ≤ Δ) {Δ' A} {σ : Sub Δ Δ'} (sσ : SNSub A σ) → SNSub A (wkSub τ σ)
+wkSNSub τ (wk ρ) = wk (wkWk τ ρ)
+wkSNSub τ (sσ ∙ r) = wkSNSub τ sσ ∙ wkSNRes τ r
+
+liftSNSub : ∀ {Γ Δ} {σ : Sub Γ Δ} {A B} (sσ : SNSub A σ) →
+            SNSub A (wkSub (weak {B} id≤) σ ∙ var! vz)
+liftSNSub sσ = wkSNSub (weak id≤) sσ ∙ rvar vz
+
 
 valr : ∀ {B Γ} {t : Tm Γ B} → SNRes Nat t → Tm Γ B
 valr (rtm sn) = num (val sn)
@@ -534,29 +584,39 @@ vals : ∀{Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ) → Sub Γ Δ
 vals (wk τ) = wk τ
 vals (sσ ∙ r) = vals sσ ∙ valr r
 
+wkValr : ∀{Γ Δ} (τ : Γ ≤ Δ) {A} {t : Tm Δ A} (r : SNRes Nat t) → valr (wkSNRes τ r) ≡ wkTm τ (valr r)
+wkValr τ (rtm sn) = refl
+wkValr τ (rvar x) = refl
+
+wkVals : ∀{Γ Δ} (τ : Γ ≤ Δ) {Δ'} {σ : Sub Δ Δ'} (sσ : SNSub Nat σ) → vals (wkSNSub τ sσ) ≡ wkSub τ (vals sσ)
+wkVals τ (wk τ₁) = refl
+wkVals τ (sσ ∙ r) = cong₂  _∙_ (wkVals τ sσ) (wkValr τ r)
+
+{-# REWRITE wkValr wkVals #-}
+
 -- Value expansion lemma
 
 -- Need an inductive (relational) definition of substitution
 
 mutual
-  SNElims' : ∀ {Γ A B C Δ} (es₀ : Elims Γ A B) (σ : Sub Γ Δ) (es : Elims Δ B C) → Set
-  SNElims' {Γ} {A} {B} es₀ σ es = (eqT : B ≡ A) (eq : subst (Elims Γ A) eqT es₀ ≡ []) → SNElims (subElims σ es)
+  SNElims' : ∀ {Γ A B C} (es₀ : Elims Γ A B) (es : Elims Γ B C) → Set
+  SNElims' {Γ} {A} {B} es₀ es = (eqT : B ≡ A) (eq : subst (Elims Γ A) eqT es₀ ≡ []) → SNElims es
 
   valexpElims' : ∀ {Γ Δ} {σ : Sub Γ Δ} (sσ : SNSub Nat σ)
             {A B C} {es₀ : Elims Γ A B} {es' : Elims Γ B C} {es : Elims Δ B C}
             (ses : SubstElims (vals sσ) es es') →
-            (sns : SNElims (es₀ ++ es')) → SNElims' es₀ σ es
+            (sns : SNElims (es₀ ++ es')) → SNElims' es₀ (subElims σ es)
             -- (eqT : B ≡ A)
             -- (eq : subst (Elims Γ A) eqT es₀ ≡ []) → SNElims (subElims σ es)
   valexpElims' sσ ses sns refl refl = valexpElims sσ ses sns
 
   valexpVar : ∀ {A Γ B C} {es₀ : Elims Γ A B}
-              {Δ} {x : Var Δ B} {es : Elims Δ B C} {σ : Sub Γ Δ}
+              {Δ} {x : Var Δ B} {es : Elims Γ B C} {σ : Sub Γ Δ}
               (sσ : SNSub Nat σ) (x' : Var Γ A) →
             (sx  : SubstVar (vals sσ) x (var x' ∙ es₀)) →
-            (sns : SNElims' es₀ σ es) → SN (subVar σ x ◇ subElims σ es)
+            (sns : SNElims' es₀ es) → SN (subVar σ x ◇ es)
   valexpVar (wk τ) x' (suwk wx) sns = ne (wkVar τ _) (sns refl refl)
-  valexpVar (sσ ∙ rtm sn) x' (suvz eq) sns = {!!}  -- refute eq : num _ = var _ ∙ _
+  valexpVar (sσ ∙ rtm sn) x' (suvz eq) sns = numNotVar _ eq  -- refute eq : num _ = var _ ∙ _
   valexpVar (sσ ∙ rtm sn) x' (suvs sx) sns = valexpVar sσ x' sx sns
   valexpVar (sσ ∙ rvar x) .x suvz! sns = ne x (sns refl refl)
   valexpVar (sσ ∙ rvar x) x' (suvs sx) sns = valexpVar sσ x' sx sns
@@ -595,14 +655,69 @@ mutual
   valexp sσ (suc st ∙ se ∷ ses ∣ ()) (suc sn)
   valexp sσ (abs st ∙ ses ∣ ()) (suc sn)
 
-  valexp sσ st (abs sn) = {!!}
+  -- Case var
+  valexp sσ (var sx ∙′ ses) (ne x sns) = valexpVar sσ x sx (valexpElims' sσ ses sns)
+  -- Impossible subcases
   valexp sσ (zero ∙ ses ∣ ()) (ne x sns)
   valexp sσ (suc st ∙ ses ∣ ()) (ne x sns)
   valexp sσ (abs st ∙ ses ∣ ()) (ne x sns)
-  valexp sσ (var sx ∙′ ses) (ne x sns) = {!(valexpElims sσ ses sns)!} -- valexpVar sσ x sx
-  valexp sσ st (zerec sn sn₁) = {!!}
-  valexp sσ st (surec sn sn₁) = {!!}
-  valexp sσ st (beta sn sn₁) = {!!}
+
+  -- Case abs
+  valexp sσ (abs st ∙′ []) (abs sn) = abs (valexp (liftSNSub sσ) st sn)  -- REWRITE wkVals
+  -- Impossible cases
+  valexp sσ (var sx ∙ ses ∣ apd) (abs sn) = valexpAbs sσ sx _ apd
+  valexp sσ (zero ∙ ses ∣ ()) (abs sn)
+  valexp sσ (suc st ∙ ses ∣ ()) (abs sn)
+
+  valexp sσ (zero ∙′ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn)
+  valexp sσ (suc st ∙ ses ∣ ()) (zerec snv sn)
+  valexp sσ (abs st ∙ ses ∣ ()) (zerec snv sn)
+  valexp sσ (var sx ∙ ses ∣ apd) (zerec snv sn) = {!valExpZeRec sσ sx ses apd snv sn!}  -- should be impossible by induction on sx
+
+  -- valexp sσ (var sx ∙′ []) (zerec snv sn) = snSubVar sσ _
+  -- valexp sσ (var sx ∙ app su ∷ ses ∣ apd) (zerec snv sn) = {!!}  -- should be impossible by induction on sx
+  -- valexp sσ (_∙_∣_ {t' = zero ∙ es} (var sx) (rec su sv ∷ ses) apd) (zerec snv sn) = {!apd!}
+  -- valexp sσ (_∙_∣_ {t' = suc t ∙ es} (var sx) (rec su sv ∷ ses) ()) (zerec snv sn)
+  -- valexp sσ (_∙_∣_ {t' = abs t ∙ es} (var sx) (rec su sv ∷ ses) ()) (zerec snv sn)
+  -- valexp sσ (_∙_∣_ {t' = var x ∙ es} (var sx) (rec su sv ∷ ses) ()) (zerec snv sn)
+
+  valexp sσ st (surec snt sn) = {!!}
+  valexp sσ st (beta snu sn) = {!!}
+
+  valexpAbs : ∀ {A B Γ} {t : Tm (Γ ∙ A) B} {C Δ} {x : Var Δ C}
+              {t' : Tm Γ C} {σ : Sub Γ Δ}
+            (sσ : SNSub Nat σ) →
+            (sx : SubstVar (vals sσ) x t') →
+            (es : Elims Γ C (A ⇒ B)) →
+            (apd : Append t' es (abs! t)) → ∀{ℓ} → Absurd ℓ
+  valexpAbs (wk τ) (suwk wx) es ()
+  valexpAbs (sσ ∙ rtm sn) suvz! (e ∷ es) apd = headIsNotAppend _ apd
+  valexpAbs (sσ ∙ rvar x) suvz! es ()
+  valexpAbs (sσ ∙ r) (suvs sx) es apd = valexpAbs sσ sx es apd
+
+  valExpZeRec : ∀ {Γ Δ A C D} {σ : Sub Γ Δ} {u : Tm Γ C} {v : Tm Γ (Nat ⇒ C ⇒ C)}
+                {es : Elims Γ C D} {x : Var Δ A} {t' : Tm Γ A}
+                {es₁ : Elims Δ A D} {es' : Elims Γ A D}
+                (sσ : SNSub Nat σ) →
+              (sx : SubstVar (vals sσ) x t') →
+              (ses : SubstElims (vals sσ) es₁ es') →
+              (apd : Append t' es' (zero ∙ rec u v ∷ es)) →
+              (snv : SN v) (snus : SN (u ◇ es)) → SN (subVar σ x ◇ subElims σ es₁)
+  valExpZeRec (wk τ) (suwk wx) ses () snv snus
+  valExpZeRec (sσ ∙ rtm sn) (suvz eq) ses apd snv snus = {!!}  -- induction on sn
+  valExpZeRec (sσ ∙ rvar x) suvz! ses () snv snus
+  valExpZeRec (sσ ∙ r) (suvs sx) ses apd snv snus = {!valExpZeRec sσ sx ses apd snv snus!} -- Need generalization!
+
+  -- valexpAbs : ∀ {A B Γ} {t : Tm (Γ ∙ A) B} {A₁ Δ} {x : Var Δ A₁}
+  --             {t' : Tm Γ A₁} {es : Elims Δ A₁ (A ⇒ B)} {σ : Sub Γ Δ}
+  --             {es' : Elims Γ A₁ (A ⇒ B)} (sσ : SNSub Nat σ) →
+  --           (sx : SubstVar (vals sσ) x t') →
+  --           (ses : SubstElims (vals sσ) es es') →
+  --           (apd : Append t' es' (abs! t)) → SN (subVar σ x ◇ subElims σ es)
+  -- valexpAbs (wk τ) (suwk wx) ses ()
+  -- valexpAbs (sσ ∙ rtm sn) suvz! (se ∷ ses) apd = headIsNotAppend _ apd
+  -- valexpAbs (sσ ∙ rvar x) suvz! ses ()
+  -- valexpAbs (sσ ∙ r) (suvs sx) ses apd = valexpAbs sσ sx {!!} apd
 
 {-
   valexp sσ (zero ∙′ []) zero = zero
@@ -703,5 +818,9 @@ mutual
   nfElims []       = normEs []
   nfElims (e ∷ es) =  consNF (nfElim e) (nfElims es)
 
+-- -}
+-- -}
+-- -}
+-- -}
 -- -}
 -- -}
