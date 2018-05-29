@@ -84,6 +84,10 @@ numNotVar : ∀ (n : ℕ) {Γ A} {x : Var Γ A} {es : Elims Γ A Nat} (eq : num 
 numNotVar zero ()
 numNotVar (suc n) ()
 
+numNotElim : ∀ (n : ℕ) {Γ A B} {h : Head Γ A} {e : Elim Γ A B} {es : Elims Γ B Nat} (eq : num n ≡ h ∙ e ∷ es) → ∀{ℓ} → Absurd ℓ
+numNotElim zero ()
+numNotElim (suc n) ()
+
 -- Elimination concatenation
 
 _++_ : ∀{Γ A B C} (es : Elims Γ A B) (es' : Elims Γ B C) → Elims Γ A C
@@ -672,7 +676,7 @@ mutual
   valexp sσ (zero ∙′ rec su sv ∷ ses) (zerec snv sn) = zerec (valexp sσ sv snv) (valexp sσ (su ◇s ses) sn)
   valexp sσ (suc st ∙ ses ∣ ()) (zerec snv sn)
   valexp sσ (abs st ∙ ses ∣ ()) (zerec snv sn)
-  valexp sσ (var sx ∙ ses ∣ apd) (zerec snv sn) = {!valExpZeRec sσ sx ses apd snv sn!}  -- should be impossible by induction on sx
+  valexp sσ (var sx ∙ ses ∣ apd) (zerec snv sn) = {!valExpZeRec sσ sx ses apd snv sn!}  -- by induction on sx
 
   -- valexp sσ (var sx ∙′ []) (zerec snv sn) = snSubVar sσ _
   -- valexp sσ (var sx ∙ app su ∷ ses ∣ apd) (zerec snv sn) = {!!}  -- should be impossible by induction on sx
@@ -695,16 +699,51 @@ mutual
   valexpAbs (sσ ∙ rvar x) suvz! es ()
   valexpAbs (sσ ∙ r) (suvs sx) es apd = valexpAbs sσ sx es apd
 
-  valExpZeRec : ∀ {Γ Δ A C D} {σ : Sub Γ Δ} {u : Tm Γ C} {v : Tm Γ (Nat ⇒ C ⇒ C)}
-                {es : Elims Γ C D} {x : Var Δ A} {t' : Tm Γ A}
-                {es₁ : Elims Δ A D} {es' : Elims Γ A D}
-                (sσ : SNSub Nat σ) →
-              (sx : SubstVar (vals sσ) x t') →
-              (ses : SubstElims (vals sσ) es₁ es') →
-              (apd : Append t' es' (zero ∙ rec u v ∷ es)) →
-              (snv : SN v) (snus : SN (u ◇ es)) → SN (subVar σ x ◇ subElims σ es₁)
+  valExpZeRec : ∀ {Γ Δ A C D} {σ : Sub Γ Δ}
+                {x : Var Δ A} {t' : Tm Γ A}
+                {es : Elims Δ A D} {es' : Elims Γ A D}
+                (sσ : SNSub Nat σ)
+              (sx : SubstVar (vals sσ) x t')
+              (ses : SubstElims (vals sσ) es es')
+              {u : Tm Γ C} {v : Tm Γ (Nat ⇒ C ⇒ C)} {esᵣ : Elims Γ C D}
+              (apd : Append t' es' (zero ∙ rec u v ∷ esᵣ))
+              (snv : SN v) (snus : SN (u ◇ esᵣ)) →
+              SN (subVar σ x ◇ subElims σ es)
   valExpZeRec (wk τ) (suwk wx) ses () snv snus
-  valExpZeRec (sσ ∙ rtm sn) (suvz eq) ses apd snv snus = {!!}  -- induction on sn
+  valExpZeRec (sσ ∙ rtm sn) (suvz eq) [] append snv snus = numNotElim _ eq
+  valExpZeRec {Γ} {t' = zero!} (_∙_ {σ = σ} sσ (rtm sn)) (suvz eq) (_∷_ (rec {u = u} su {v} sv) {es} ses) {u'} {v'} append snv snus = {!valexpElims (sσ ∙ rtm sn) ses ?!}
+    -- aux sn eq su sv ses    -- induction on sn
+    where
+    snv' : SN (subTm (σ ∙ _) v
+    snv' = valexp (sσ ∙ rtm sn) sv snv
+    snu' : SN (subTm (σ ∙ _) u
+    snu' = valexp (sσ ∙ rtm sn) su ?  -- snu from (snus : SN (u ◇ esᵣ)
+    aux : ∀ {t : Tm Γ Nat} (sn : SN t) →
+      (eq : num (val sn) ≡ zero!) →
+      (su : SubstTm (vals sσ ∙ num (val sn)) u u') →
+      (sv : SubstTm (vals sσ ∙ num (val sn)) v v') →
+      (ses : SubstElims (vals sσ ∙ num (val sn)) _ _) →  -- es es'
+      SN (t ◇ rec (subTm (σ ∙ t) u) (subTm (σ ∙ t) v) ∷ subElims (σ ∙ t) es)
+    aux zero eq su sv ses = zerec {!!} {!!}
+    aux (suc sn) () su sv ses
+    aux (ne x sns) eq su sv ses = {!!}
+    aux (zerec snv sn) eq su sv ses = {!zerec snv (aux sn eq su sv ses)!}
+    aux (surec snt sn) eq su sv ses = {!!}
+    aux (beta  snu sn) eq su sv ses = {!!}
+    -- aux : ∀ {B Γ} {u' : Tm Γ B} {v' : Tm Γ (Nat ⇒ B ⇒ B)} {D}
+    --     {es' : Elims Γ B D} {Δ} {u : Tm (Δ ∙ Nat) B}
+    --     {v : Tm (Δ ∙ Nat) (Nat ⇒ B ⇒ B)} {es : Elims (Δ ∙ Nat) B D}
+    --     {σ : Sub Γ Δ} {sσ : SNSub Nat σ} {t : Tm Γ Nat} (sn : SN t) →
+    --   (eq : num (val sn) ≡ zero!) →
+    --   (su : SubstTm (vals sσ ∙ num (val sn)) u u') →
+    --   (sv : SubstTm (vals sσ ∙ num (val sn)) v v') →
+    --   (ses : SubstElims (vals sσ ∙ num (val sn)) es es') →
+    --   SN (t ◇ rec (subTm (σ ∙ t) u) (subTm (σ ∙ t) v) ∷ subElims (σ ∙ t) es)
+    -- aux = {!!}
+  valExpZeRec {t' = zero ∙ .(rec _ _) ∷ es} (sσ ∙ rtm sn) (suvz eq) (rec su sv ∷ ses) append snv snus = numNotElim _ eq
+  valExpZeRec {t' = suc t ∙ es} (sσ ∙ rtm sn) (suvz eq) (rec su sv ∷ ses) () snv snus
+  valExpZeRec {t' = abs t ∙ es} (sσ ∙ rtm sn) (suvz eq) (rec su sv ∷ ses) () snv snus
+  valExpZeRec {t' = var x ∙ es} (sσ ∙ rtm sn) (suvz eq) (rec su sv ∷ ses) () snv snus
   valExpZeRec (sσ ∙ rvar x) suvz! ses () snv snus
   valExpZeRec (sσ ∙ r) (suvs sx) ses apd snv snus = {!valExpZeRec sσ sx ses apd snv snus!} -- Need generalization!
 
